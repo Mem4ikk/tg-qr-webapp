@@ -22,6 +22,7 @@
       margin-bottom: 12px;
       font-size: 14px;
       opacity: 0.9;
+      min-height: 1.5em;
     }
 
     .video-wrapper {
@@ -31,6 +32,7 @@
       width: 100%;
       border-radius: 16px;
       overflow: hidden;
+      background: #000;
       box-shadow: 0 0 20px rgba(0, 0, 0, 0.6);
     }
 
@@ -38,6 +40,7 @@
       width: 100%;
       height: auto;
       display: block;
+      background: #000;
     }
 
     #overlay {
@@ -45,64 +48,106 @@
       inset: 0;
       pointer-events: none;
     }
+
+    #start-btn {
+      margin-bottom: 12px;
+      padding: 10px 18px;
+      border-radius: 999px;
+      border: none;
+      font-size: 15px;
+      font-weight: 600;
+      background: #00c271;
+      color: #050509;
+      cursor: pointer;
+    }
+
+    #start-btn:active {
+      transform: scale(0.97);
+    }
   </style>
 </head>
 <body>
   <h2>Сканер QR</h2>
-  <p id="status">Наведи камеру на QR-код</p>
+  <p id="status">Нажми кнопку, чтобы запустить камеру</p>
+
+  <button id="start-btn">Запустить камеру</button>
 
   <div class="video-wrapper">
-    <video id="video" playsinline autoplay></video>
-    <!-- На этом canvas рисуем рамку -->
+    <video id="video" playsinline></video>
     <canvas id="overlay"></canvas>
   </div>
 
-  <!-- Скрытый canvas для обработки пикселей -->
+  <!-- Скрытый canvas для обработки -->
   <canvas id="canvas" style="display:none;"></canvas>
 
   <!-- Telegram WebApp SDK -->
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 
-  <!-- jsQR для распознавания QR -->
-  <script type="module">
-    const tg = window.Telegram.WebApp;
-    tg.expand();
+  <!-- jsQR (глобальная функция jsQR) -->
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+
+  <script>
+    const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+    if (tg) tg.expand();
 
     const video = document.getElementById('video');
     const canvas = document.getElementById('canvas');     // для обработки
     const overlay = document.getElementById('overlay');   // для рамки
     const statusEl = document.getElementById('status');
+    const startBtn = document.getElementById('start-btn');
 
     const ctx = canvas.getContext('2d');
     const overlayCtx = overlay.getContext('2d');
 
-    async function startCamera() {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "environment" }
-        });
-        video.srcObject = stream;
-        statusEl.textContent = "Камера запущена, наведи на QR...";
-      } catch (e) {
-        console.error(e);
-        statusEl.textContent = "Нет доступа к камере 😢 Разреши доступ в настройках.";
-      }
+    let streamStarted = false;
+
+    function setStatus(text) {
+      statusEl.textContent = text;
     }
 
-    import jsQR from "https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.mjs";
+    function logError(e) {
+      console.error(e);
+      setStatus('Ошибка: ' + (e && e.message ? e.message : e));
+    }
 
     function drawLine(ctx, begin, end) {
       ctx.beginPath();
       ctx.moveTo(begin.x, begin.y);
       ctx.lineTo(end.x, end.y);
       ctx.lineWidth = 4;
-      ctx.strokeStyle = "#00ff7f"; // неон зелёный
+      ctx.strokeStyle = "#00ff7f"; // зелёная рамка
       ctx.stroke();
     }
 
+    async function startCamera() {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        setStatus("Этот браузер не поддерживает камеру.");
+        return;
+      }
+
+      try {
+        setStatus("Запрашиваю доступ к камере...");
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "environment" }
+        });
+        video.srcObject = stream;
+        video.setAttribute("autoplay", true);
+        video.setAttribute("playsinline", true);
+        video.play();
+
+        streamStarted = true;
+        startBtn.style.display = "none";
+        setStatus("Камера запущена, наведи на QR-код.");
+        requestAnimationFrame(tick);
+      } catch (e) {
+        logError(e);
+      }
+    }
+
     function tick() {
+      if (!streamStarted) return;
+
       if (video.readyState === video.HAVE_ENOUGH_DATA) {
-        // синхронизируем размеры canvas'ов с видео
         if (canvas.width !== video.videoWidth) {
           canvas.width = video.videoWidth;
           canvas.height = video.videoHeight;
@@ -110,46 +155,52 @@
           overlay.height = video.videoHeight;
         }
 
-        // чистим оверлей перед новым кадром
         overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
 
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
 
-        const code = jsQR(imageData.data, imageData.width, imageData.height, {
-          inversionAttempts: "dontInvert",
-        });
+        let code = null;
+        try {
+          code = jsQR(imageData.data, imageData.width, imageData.height, {
+            inversionAttempts: "dontInvert",
+          });
+        } catch (e) {
+          logError(e);
+        }
 
         if (code) {
-          // Рисуем рамку вокруг QR
           const loc = code.location;
           drawLine(overlayCtx, loc.topLeftCorner, loc.topRightCorner);
           drawLine(overlayCtx, loc.topRightCorner, loc.bottomRightCorner);
           drawLine(overlayCtx, loc.bottomRightCorner, loc.bottomLeftCorner);
           drawLine(overlayCtx, loc.bottomLeftCorner, loc.topLeftCorner);
 
-          statusEl.textContent = "QR найден, отправляю в бота...";
-
+          setStatus("QR найден, отправляю в бота...");
           const qrText = code.data;
 
           try {
-            tg.sendData(qrText);
+            if (tg) {
+              tg.sendData(qrText);
+              tg.close();
+            } else {
+              alert("QR: " + qrText);
+            }
           } catch (e) {
-            console.error("Ошибка tg.sendData:", e);
+            logError(e);
           }
-
-          tg.close();
           return;
         } else {
-          statusEl.textContent = "Поиск QR-кода...";
+          setStatus("Поиск QR-кода...");
         }
       }
 
       requestAnimationFrame(tick);
     }
 
-    startCamera().then(() => {
-      requestAnimationFrame(tick);
+    // запуск камеры только по нажатию
+    startBtn.addEventListener('click', () => {
+      startCamera();
     });
   </script>
 </body>
