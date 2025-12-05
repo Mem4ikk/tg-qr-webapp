@@ -36,17 +36,10 @@
       box-shadow: 0 0 20px rgba(0, 0, 0, 0.6);
     }
 
-    #video {
+    #canvas {
       width: 100%;
       height: auto;
       display: block;
-      background: #000;
-    }
-
-    #overlay {
-      position: absolute;
-      inset: 0;
-      pointer-events: none;
     }
 
     #start-btn {
@@ -73,16 +66,14 @@
   <button id="start-btn">Запустить камеру</button>
 
   <div class="video-wrapper">
-    <video id="video" playsinline></video>
-    <canvas id="overlay"></canvas>
+    <!-- video используем только как источник, его не видно -->
+    <video id="video" playsinline autoplay style="display:none;"></video>
+    <!-- на этом canvas рисуем и картинку, и рамку -->
+    <canvas id="canvas"></canvas>
   </div>
-
-  <!-- Скрытый canvas для обработки -->
-  <canvas id="canvas" style="display:none;"></canvas>
 
   <!-- Telegram WebApp SDK -->
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
-
   <!-- jsQR (глобальная функция jsQR) -->
   <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 
@@ -91,15 +82,15 @@
     if (tg) tg.expand();
 
     const video = document.getElementById('video');
-    const canvas = document.getElementById('canvas');     // для обработки
-    const overlay = document.getElementById('overlay');   // для рамки
+    const canvas = document.getElementById('canvas');
     const statusEl = document.getElementById('status');
     const startBtn = document.getElementById('start-btn');
 
     const ctx = canvas.getContext('2d');
-    const overlayCtx = overlay.getContext('2d');
 
     let streamStarted = false;
+    let lastSentData = null;
+    let lastSentAt = 0; // ms
 
     function setStatus(text) {
       statusEl.textContent = text;
@@ -130,6 +121,7 @@
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: "environment" }
         });
+
         video.srcObject = stream;
         video.setAttribute("autoplay", true);
         video.setAttribute("playsinline", true);
@@ -144,24 +136,49 @@
       }
     }
 
+    function maybeSendToTelegram(qrText) {
+      const now = Date.now();
+
+      // шлём только если:
+      // 1) текст поменялся, или
+      // 2) прошло больше 1000 мс с прошлого раза
+      if (qrText === lastSentData && now - lastSentAt < 1000) {
+        return;
+      }
+
+      lastSentData = qrText;
+      lastSentAt = now;
+
+      try {
+        if (tg) {
+          tg.sendData(qrText);
+        } else {
+          console.log("QR:", qrText);
+        }
+      } catch (e) {
+        logError(e);
+      }
+    }
+
     function tick() {
-      if (!streamStarted) return;
+      if (!streamStarted) {
+        return;
+      }
 
       if (video.readyState === video.HAVE_ENOUGH_DATA) {
-        if (canvas.width !== video.videoWidth) {
+        // подгоняем размер canvas под реальное разрешение камеры
+        if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
           canvas.width = video.videoWidth;
           canvas.height = video.videoHeight;
-          overlay.width = video.videoWidth;
-          overlay.height = video.videoHeight;
         }
 
-        overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
-
+        // сначала рисуем текущий кадр с камеры
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
 
+        // берём пиксели и ищем QR
         let code = null;
         try {
+          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
           code = jsQR(imageData.data, imageData.width, imageData.height, {
             inversionAttempts: "dontInvert",
           });
@@ -171,25 +188,17 @@
 
         if (code) {
           const loc = code.location;
-          drawLine(overlayCtx, loc.topLeftCorner, loc.topRightCorner);
-          drawLine(overlayCtx, loc.topRightCorner, loc.bottomRightCorner);
-          drawLine(overlayCtx, loc.bottomRightCorner, loc.bottomLeftCorner);
-          drawLine(overlayCtx, loc.bottomLeftCorner, loc.topLeftCorner);
 
-          setStatus("QR найден, отправляю в бота...");
-          const qrText = code.data;
+          // рисуем рамку поверх уже нарисованного кадра
+          drawLine(ctx, loc.topLeftCorner, loc.topRightCorner);
+          drawLine(ctx, loc.topRightCorner, loc.bottomRightCorner);
+          drawLine(ctx, loc.bottomRightCorner, loc.bottomLeftCorner);
+          drawLine(ctx, loc.bottomLeftCorner, loc.topLeftCorner);
 
-          try {
-            if (tg) {
-              tg.sendData(qrText);
-              tg.close();
-            } else {
-              alert("QR: " + qrText);
-            }
-          } catch (e) {
-            logError(e);
-          }
-          return;
+          setStatus("QR найден ✅");
+
+          // постоянно обновляем QR в боте
+          maybeSendToTelegram(code.data);
         } else {
           setStatus("Поиск QR-кода...");
         }
