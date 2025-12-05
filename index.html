@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <title>QR Scanner</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+</head>
+<body style="font-family: system-ui, sans-serif; text-align: center; padding: 16px;">
+  <h2>Сканер QR</h2>
+  <p id="status">Наведи камеру на QR-код</p>
+
+  <video id="video" playsinline autoplay style="width: 100%; max-width: 400px; border-radius: 12px;"></video>
+  <canvas id="canvas" style="display:none;"></canvas>
+
+  <!-- Telegram WebApp SDK -->
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+  <!-- jsQR для распознавания QR -->
+  <script type="module">
+    const tg = window.Telegram.WebApp;
+    tg.expand(); // растянуть WebApp
+
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const statusEl = document.getElementById('status');
+    const ctx = canvas.getContext('2d');
+
+    async function startCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "environment" } // задняя камера
+        });
+        video.srcObject = stream;
+        statusEl.textContent = "Камера запущена, наведи на QR...";
+      } catch (e) {
+        console.error(e);
+        statusEl.textContent = "Нет доступа к камере 😢 Разреши доступ в настройках.";
+      }
+    }
+
+    import jsQR from "https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.mjs";
+
+    function tick() {
+      if (video.readyState === video.HAVE_ENOUGH_DATA) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+        const code = jsQR(imageData.data, imageData.width, imageData.height);
+        if (code) {
+          const qrText = code.data;
+          statusEl.textContent = "QR найден, отправляю в бота...";
+
+          try {
+            tg.sendData(qrText); // вот это улетает в твой бот
+          } catch (e) {
+            console.error("Ошибка tg.sendData:", e);
+          }
+
+          tg.close(); // закрываем WebApp
+          return;
+        }
+      }
+      requestAnimationFrame(tick);
+    }
+
+    startCamera().then(() => {
+      requestAnimationFrame(tick);
+    });
+  </script>
+</body>
+</html>
