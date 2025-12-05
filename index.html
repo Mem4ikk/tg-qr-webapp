@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8" />
-  <title>QR Scanner</title>
+  <title>Telegram WebApp TEST</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <style>
     body {
@@ -11,39 +11,25 @@
       font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
       background: #050509;
       color: #f5f5f5;
+    }
+    .wrap {
+      max-width: 480px;
+      margin: 0 auto;
       text-align: center;
     }
-
-    h2 {
-      margin-bottom: 8px;
-    }
-
-    #status {
+    h1 {
+      font-size: 20px;
       margin-bottom: 12px;
+    }
+    #status, #tg-info, #log {
       font-size: 14px;
-      opacity: 0.9;
-      min-height: 1.5em;
+      margin: 8px 0;
+      text-align: left;
+      word-break: break-all;
+      white-space: pre-wrap;
     }
-
-    .video-wrapper {
-      position: relative;
-      display: inline-block;
-      max-width: 420px;
-      width: 100%;
-      border-radius: 16px;
-      overflow: hidden;
-      background: #000;
-      box-shadow: 0 0 20px rgba(0, 0, 0, 0.6);
-    }
-
-    #canvas {
-      width: 100%;
-      height: auto;
-      display: block;
-    }
-
-    #start-btn {
-      margin-bottom: 12px;
+    button {
+      margin-top: 16px;
       padding: 10px 18px;
       border-radius: 999px;
       border: none;
@@ -53,163 +39,76 @@
       color: #050509;
       cursor: pointer;
     }
-
-    #start-btn:active {
+    button:active {
       transform: scale(0.97);
+    }
+    .box {
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: #11141a;
+      margin-top: 8px;
     }
   </style>
 </head>
 <body>
-  <h2>Сканер QR</h2>
-  <p id="status">Нажми кнопку, чтобы запустить камеру</p>
+  <div class="wrap">
+    <h1>Telegram WebApp TEST</h1>
 
-  <button id="start-btn">Запустить камеру</button>
+    <div id="status" class="box">Проверяю наличие Telegram WebApp...</div>
+    <div id="tg-info" class="box"></div>
+    <div id="log" class="box"></div>
 
-  <div class="video-wrapper">
-    <!-- video используем только как источник, его не видно -->
-    <video id="video" playsinline autoplay style="display:none;"></video>
-    <!-- на этом canvas рисуем и картинку, и рамку -->
-    <canvas id="canvas"></canvas>
+    <button id="send-btn">Отправить test-данные в бота</button>
   </div>
 
   <!-- Telegram WebApp SDK -->
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <!-- jsQR (глобальная функция jsQR) -->
-  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 
   <script>
+    const statusEl = document.getElementById("status");
+    const tgInfoEl = document.getElementById("tg-info");
+    const logEl = document.getElementById("log");
+    const sendBtn = document.getElementById("send-btn");
+
+    function log(msg) {
+      console.log(msg);
+      logEl.textContent += msg + "\n";
+    }
+
+    // Пытаемся достать объект WebApp
     const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
-    if (tg) tg.expand();
 
-    const video = document.getElementById('video');
-    const canvas = document.getElementById('canvas');
-    const statusEl = document.getElementById('status');
-    const startBtn = document.getElementById('start-btn');
-
-    const ctx = canvas.getContext('2d');
-
-    let streamStarted = false;
-    let lastSentData = null;
-    let lastSentAt = 0; // ms
-
-    function setStatus(text) {
-      statusEl.textContent = text;
+    if (!tg) {
+      statusEl.textContent = "❌ window.Telegram.WebApp НЕ найден.\n" +
+        "Скорее всего, эта страница ОТКРЫТА НЕ как Telegram WebApp.";
+      alert("tg = null. Это НЕ WebApp контекст.");
+    } else {
+      statusEl.textContent = "✅ Telegram WebApp ОБНАРУЖЕН.";
+      try {
+        tg.expand();
+      } catch (e) {}
+      const user = tg.initDataUnsafe && tg.initDataUnsafe.user;
+      tgInfoEl.textContent = "tg.initDataUnsafe.user:\n" + JSON.stringify(user, null, 2);
+      alert("tg обнаружен. Это WebApp! user_id=" + (user && user.id ? user.id : "unknown"));
     }
 
-    function logError(e) {
-      console.error(e);
-      setStatus('Ошибка: ' + (e && e.message ? e.message : e));
-    }
-
-    function drawLine(ctx, begin, end) {
-      ctx.beginPath();
-      ctx.moveTo(begin.x, begin.y);
-      ctx.lineTo(end.x, end.y);
-      ctx.lineWidth = 4;
-      ctx.strokeStyle = "#00ff7f"; // зелёная рамка
-      ctx.stroke();
-    }
-
-    async function startCamera() {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        setStatus("Этот браузер не поддерживает камеру.");
+    sendBtn.addEventListener("click", () => {
+      if (!tg) {
+        alert("tg отсутствует, sendData НЕ сработает.");
+        log("sendBtn: tg отсутствует, sendData не вызван.");
         return;
       }
+
+      const payload = "test-" + Date.now();
+      log("Отправляю tg.sendData: " + payload);
+      alert("Отправляю в бота: " + payload);
 
       try {
-        setStatus("Запрашиваю доступ к камере...");
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "environment" }
-        });
-
-        video.srcObject = stream;
-        video.setAttribute("autoplay", true);
-        video.setAttribute("playsinline", true);
-        video.play();
-
-        streamStarted = true;
-        startBtn.style.display = "none";
-        setStatus("Камера запущена, наведи на QR-код.");
-        requestAnimationFrame(tick);
+        tg.sendData(payload);
       } catch (e) {
-        logError(e);
+        log("Ошибка tg.sendData: " + e);
+        alert("Ошибка tg.sendData: " + e);
       }
-    }
-
-    function maybeSendToTelegram(qrText) {
-      const now = Date.now();
-
-      // шлём только если:
-      // 1) текст поменялся, или
-      // 2) прошло больше 1000 мс с прошлого раза
-      if (qrText === lastSentData && now - lastSentAt < 1000) {
-        return;
-      }
-
-      lastSentData = qrText;
-      lastSentAt = now;
-
-      try {
-        if (tg) {
-          tg.sendData(qrText);
-        } else {
-          console.log("QR:", qrText);
-        }
-      } catch (e) {
-        logError(e);
-      }
-    }
-
-    function tick() {
-      if (!streamStarted) {
-        return;
-      }
-
-      if (video.readyState === video.HAVE_ENOUGH_DATA) {
-        // подгоняем размер canvas под реальное разрешение камеры
-        if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
-          canvas.width = video.videoWidth;
-          canvas.height = video.videoHeight;
-        }
-
-        // сначала рисуем текущий кадр с камеры
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-        // берём пиксели и ищем QR
-        let code = null;
-        try {
-          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          code = jsQR(imageData.data, imageData.width, imageData.height, {
-            inversionAttempts: "dontInvert",
-          });
-        } catch (e) {
-          logError(e);
-        }
-
-        if (code) {
-          const loc = code.location;
-
-          // рисуем рамку поверх уже нарисованного кадра
-          drawLine(ctx, loc.topLeftCorner, loc.topRightCorner);
-          drawLine(ctx, loc.topRightCorner, loc.bottomRightCorner);
-          drawLine(ctx, loc.bottomRightCorner, loc.bottomLeftCorner);
-          drawLine(ctx, loc.bottomLeftCorner, loc.topLeftCorner);
-
-          setStatus("QR найден ✅");
-
-          // постоянно обновляем QR в боте
-          maybeSendToTelegram(code.data);
-        } else {
-          setStatus("Поиск QR-кода...");
-        }
-      }
-
-      requestAnimationFrame(tick);
-    }
-
-    // запуск камеры только по нажатию
-    startBtn.addEventListener('click', () => {
-      startCamera();
     });
   </script>
 </body>
